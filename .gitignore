@@ -1,0 +1,11 @@
+node_modules/
+build/
+.gradle/
+server/world/
+server/world_nether/
+server/world_the_end/
+server/logs/
+*.log
+__pycache__/
+brain/logs/
+server/.pids

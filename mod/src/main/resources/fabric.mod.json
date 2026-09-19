@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "flycraft-hud",
+  "version": "${version}",
+  "name": "FlyCraft HUD",
+  "description": "Live in-game overlay of the FlyCraft drosophila-inspired spiking brain while it plays.",
+  "authors": ["flycraft"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["com.flycraft.hud.FlycraftHudClient"]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "fabric-api": "*",
+    "minecraft": "~1.21.4",
+    "java": ">=21"
+  }
+}

@@ -1,0 +1,73 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>FlyCraft — live brain</title>
+<style>
+  body{margin:0;background:#0b0e11;color:#e8e8e8;font-family:Consolas,Menlo,monospace;display:flex;height:100vh}
+  #view{flex:1;border:0;background:#000}
+  #panel{width:248px;padding:10px;background:#10141a;border-left:1px solid #2a2f36;overflow:auto}
+  h1{font-size:13px;color:#ffc861;margin:0 0 4px}
+  .live{font-size:12px}
+  .row{display:flex;align-items:center;margin:4px 0;font-size:11px}
+  .name{width:64px;color:#bbb}
+  .bar{flex:1;height:10px;background:#2a2a2a;position:relative}
+  .fill{position:absolute;left:0;top:0;bottom:0;background:#7cfc00;width:0%}
+  .val{width:44px;text-align:right;color:#888}
+  .stat{font-size:12px;margin:8px 0;line-height:1.5}
+  a{color:#7cfc00}
+</style>
+</head>
+<body>
+<iframe id="view" src="http://127.0.0.1:3007" title="first-person view"></iframe>
+<div id="panel">
+  <h1>DROSOPHILA BRAIN <span id="live" class="live">○ connecting</span></h1>
+  <div id="bars"></div>
+  <div class="stat" id="stats">waiting for brain…</div>
+  <div class="stat">3D view: <a href="http://127.0.0.1:3007" target="_blank">open fullscreen</a><br>
+  training log: brain/logs/training.csv</div>
+</div>
+<script>
+const NAMES = ["lamina","medulla","lobula","kc","mbon","mbon_app","mbon_av","cx","gf"];
+const bars = document.getElementById('bars');
+const divs = {};
+NAMES.forEach(n => {
+  const r = document.createElement('div');
+  r.className = 'row';
+  r.innerHTML = `<div class="name">${n}</div><div class="bar"><div class="fill"></div></div><div class="val"></div>`;
+  bars.appendChild(r);
+  divs[n] = { fill: r.querySelector('.fill'), val: r.querySelector('.val') };
+});
+const live = document.getElementById('live');
+const stats = document.getElementById('stats');
+function connect() {
+  const ws = new WebSocket('ws://127.0.0.1:8765');
+  ws.onopen = () => ws.send(JSON.stringify({ role: 'hud' }));
+  ws.onmessage = (ev) => {
+    try {
+      const o = JSON.parse(ev.data);
+      if (o.type !== 'brain_state') return;
+      live.textContent = '● LIVE';
+      live.style.color = '#7cfc00';
+      for (const n of NAMES) {
+        const v = Math.max(0, Math.min(1, o.regions[n] || 0));
+        divs[n].fill.style.width = (v * 100).toFixed(1) + '%';
+        divs[n].val.textContent = v.toFixed(3);
+      }
+      stats.innerHTML = `task: <b>${o.task_name}</b><br>` +
+        `act: <b>${o.action_name}</b> (#${o.action})<br>` +
+        `R ${o.reward_sum} · ep ${o.episode} · logs ${o.logs}/5<br>` +
+        `eps ${o.eps} · rpe ${o.rpe}`;
+    } catch (e) { /* keep last frame */ }
+  };
+  ws.onclose = () => {
+    live.textContent = '○ reconnecting';
+    live.style.color = '#f55';
+    setTimeout(connect, 2000);
+  };
+  ws.onerror = () => ws.close();
+}
+connect();
+</script>
+</body>
+</html>

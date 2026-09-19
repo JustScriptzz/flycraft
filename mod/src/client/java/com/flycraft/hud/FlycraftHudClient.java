@@ -1,5 +1,6 @@
 package com.flycraft.hud;
 
+import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.fabricmc.api.ClientModInitializer;
@@ -15,6 +16,7 @@ public class FlycraftHudClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        BrainInstaller.ensureBrain();
         BrainLink.connect();
         HudLayerRegistrationCallback.EVENT.register(
             wrapper -> wrapper.attachLayerBefore(
@@ -25,13 +27,25 @@ public class FlycraftHudClient implements ClientModInitializer {
                     .then(ClientCommandManager.argument("episodes", IntegerArgumentType.integer(1))
                         .executes(c -> send("!train " + IntegerArgumentType.getInteger(c, "episodes"))))
                     .executes(c -> send("!train")))
+                .then(ClientCommandManager.literal("dope")
+                    .then(ClientCommandManager.argument("amount", DoubleArgumentType.doubleArg(0, 10))
+                        .executes(c -> send("!dope " + DoubleArgumentType.getDouble(c, "amount"))))
+                    .executes(c -> send("!dope")))
                 .then(ClientCommandManager.literal("stop").executes(c -> send("!stop")))
                 .then(ClientCommandManager.literal("status").executes(c -> send("!status")))
                 .then(ClientCommandManager.literal("task")
                     .then(ClientCommandManager.argument("which", StringArgumentType.word())
                         .executes(c -> send("!task " + StringArgumentType.getString(c, "which")))))
                 .then(ClientCommandManager.literal("watch").executes(c -> send("!watch")))
+                .then(ClientCommandManager.literal("summon")
+                    .then(ClientCommandManager.argument("name", StringArgumentType.word())
+                        .executes(c -> send("!summon " + StringArgumentType.getString(c, "name"))))
+                    .executes(c -> send("!summon")))
                 .then(ClientCommandManager.literal("play").executes(c -> send("!play")))
+                .then(ClientCommandManager.literal("lan").executes(c -> {
+                    LanOpener.announce();
+                    return 1;
+                }))
                 .executes(c -> send("!help"))));
     }
 

@@ -10,6 +10,9 @@ foreach ($f in @('gradlew', 'gradlew.bat', 'gradle/wrapper/gradle-wrapper.jar', 
     Invoke-WebRequest -Uri "$base/$f" -OutFile $f
   }
 }
+# Refresh the brain scripts bundled inside the mod jar (re-copy on brain changes).
+New-Item -ItemType Directory -Path 'src/main/resources/brain' -Force | Out-Null
+Copy-Item '../brain/flybrain.py', '../brain/serve.py' -Destination 'src/main/resources/brain/' -Force
 Write-Host '[mod] building...'
 & .\gradlew.bat build
 Write-Host '[mod] done. Jar is in build/libs/ - drop it into your Fabric 1.21.4 mods folder.'

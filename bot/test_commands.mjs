@@ -38,6 +38,7 @@ console.log('WATCH moved blocks:', moved.toFixed(1))
 if (moved < 3) throw new Error('!watch did not teleport tester')
 await sleep(4000) // let the trigger poll enable objectives for Tester
 console.log('TRIGGER:', await ask('/trigger fly set 1', /ep=\d+/))
+console.log('SUMMON:', await ask('!summon', /spawned .* for/))
 console.log('COMMANDS OK')
 t.quit()
 process.exit(0)

@@ -34,17 +34,22 @@ for (let ix = 0; ix < 4; ix++) for (let iz = 0; iz < 2; iz++)
 
 const LOGS = ['oak_log']
 const LOG_RCON = process.env.LOG_RCON === '1'
-const TASKS = ['chop', 'beacon']
+const TASKS = ['chop', 'beacon', 'craft']
 const BEACON = { x: 0, z: 24 }
+const CRAFT_PAD = { x: 24, z: 16 }
+let dopeMult = 1.0  // reward scale, set live via !dope
 let rcon, bot, brain
 let episode = 0, t = 0, epReward = 0, logsThisEp = 0, prevDist = 0
 let digging = false, targetTree = PADS[0], log
 let task = 'chop', target = { x: 0, z: 0 }
+let prevPlanks = 0, prevSticks = 0, prevPick = 0
+let crafting = false, craftSince = 0
 let trainingActive = false, targetEpisodes = Infinity, loopRunning = false
 let taskFilter = null, lastBrainState = null
 let lastReward = 0, prevLogs = 0, arenaBuilt = false, digSince = 0
 let digTargetName = null  // block being dug (diggingCompleted only reports air)
 let prevAction = -1, lastMineHadTarget = false  // wasted-effort tracking
+let curAction = -1  // persistent controls: re-issue only on change
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
@@ -98,6 +103,18 @@ async function setupServer() {
   await rc('gamerule doImmediateRespawn true')
   await rc('op Drosobot')
   await setupTriggers()
+  await installDatapack()
+}
+
+// Datapack (vanilla HUD): copies datapacks/fly-1.21.4 into the world and
+// reloads, so bossbars/objectives exist with zero manual steps.
+async function installDatapack() {
+  try {
+    console.log('[bot] installing datapack...')
+    fs.cpSync('../datapacks/fly-1.21.4', '../server/world/datapacks/fly', { recursive: true, force: true })
+    await rc('reload')
+    await rc('datapack enable file/fly')
+  } catch (e) { console.log('[bot] datapack install failed:', String(e).slice(0, 120)) }
 }
 
 // Vanilla /trigger plumbing: any player can run `/trigger fly set <code>`
@@ -144,6 +161,9 @@ function triggerCommand(user, code, arg) {
     case 5: onCommand(user, 'watch', []); break
     case 6: onCommand(user, 'play', []); break
     case 7: onCommand(user, 'help', []); break
+    case 8: onCommand(user, 'summon', []); break
+    case 9: onCommand(user, 'dope', []); break
+    case 10: onCommand(user, 'dope', arg > 0 ? [String(arg / 10)] : []); break
     default: bot.chat(`[fly] unknown /trigger code ${code}`)
   }
 }
@@ -172,6 +192,10 @@ async function buildTree(p) {
   await rc(`setblock ${x} ${AY + 5} ${z} oak_leaves[persistent=true]`)
 }
 
+async function buildTable(p) {
+  await rc(`setblock ${p.x} ${AY} ${p.z} crafting_table`)
+}
+
 async function resetEpisode() {
   for (let i = 0; i < 20 && bot.health <= 0; i++) await sleep(500)  // wait out death/respawn
   task = taskFilter ?? TASKS[episode % TASKS.length]
@@ -179,16 +203,20 @@ async function resetEpisode() {
   if (task === 'chop') {
     targetTree = PADS[episode % PADS.length]
     target = { x: targetTree.x, z: targetTree.z }
-  } else {
+  } else if (task === 'beacon') {
     target = { x: BEACON.x, z: BEACON.z }
+  } else {
+    target = { x: CRAFT_PAD.x, z: CRAFT_PAD.z }
   }
   const sx = target.x + SD, sz = target.z + SD
   await rc(`tp Drosobot ${sx} ${AY + 1} ${sz} -135 0`) // chunk-loading tp
   await awaitTeleport(sx, AY + 1, sz)
   if (!arenaBuilt) { await buildArena(); arenaBuilt = true }
   if (task === 'chop') await buildTree(targetTree)
+  if (task === 'craft') await buildTable(target)
   await rc('clear Drosobot')
-  await rc(`give Drosobot ${AXE} 1`)
+  if (task === 'craft') await rc('give Drosobot oak_log 4')
+  else await rc(`give Drosobot ${AXE} 1`)
   // Final placement tp AFTER the floor exists (the loader tp above drops the
   // bot into mid-air while fills run; without this it falls through).
   await rc(`tp Drosobot ${sx} ${AY + 1} ${sz} -135 0`)
@@ -202,6 +230,8 @@ async function resetEpisode() {
   const pp = bot.entity.position
   console.log(`[bot] reset settled=${settled} pos=(${pp.x.toFixed(1)},${pp.y.toFixed(1)},${pp.z.toFixed(1)})`)
   t = 0; epReward = 0; logsThisEp = 0; lastReward = 0; prevLogs = 0
+  prevPlanks = 0; prevSticks = 0; prevPick = 0
+  bot.clearControlStates(); digging = false; digTargetName = null; curAction = -1
   const d = bot.entity.position
   prevDist = Math.hypot(d.x - target.x, d.z - target.z)
   console.log(`[bot] === episode ${episode} [${task}] @ (${target.x},${target.z}) ===`)
@@ -255,21 +285,23 @@ function sense() {
 }
 
 async function act(a, task) {
-  bot.clearControlStates()
-  if (a !== 8 && digging) {
-    try { bot.stopDigging() } catch { /* already idle */ }
-    digging = false
+  if (a !== curAction) {
+    bot.clearControlStates()
+    if (curAction === 8 && digging) {
+      try { bot.stopDigging() } catch { /* already idle */ }
+      digging = false; digTargetName = null
+    }
+    curAction = a
+    if (a === 1) bot.setControlState('forward', true)
+    else if (a === 2) bot.setControlState('back', true)
+    else if (a === 3) bot.setControlState('left', true)
+    else if (a === 4) bot.setControlState('right', true)
+    else if (a === 5) { bot.setControlState('jump', true); bot.setControlState('forward', true) }
   }
-  switch (a) {
-    case 1: bot.setControlState('forward', true); break
-    case 2: bot.setControlState('back', true); break
-    case 3: bot.setControlState('left', true); break
-    case 4: bot.setControlState('right', true); break
-    case 5: bot.setControlState('jump', true); bot.setControlState('forward', true); break
-    case 6: await bot.look(bot.entity.yaw + 0.35, bot.entity.pitch, true); break
-    case 7: await bot.look(bot.entity.yaw - 0.35, bot.entity.pitch, true); break
-    case 8: {
-      if (task !== 'chop') break  // action masking: mining only exists in chop
+  if (a === 6) await bot.look(bot.entity.yaw + 0.35, bot.entity.pitch, true)
+  else if (a === 7) await bot.look(bot.entity.yaw - 0.35, bot.entity.pitch, true)
+  else if (a === 8) {
+      if (task !== 'chop' && task !== 'craft') return  // mining only where it can help
       lastMineHadTarget = false
       const c = bot.blockAtCursor(4.5)
       let tgt = c && LOGS.includes(c.name) ? c : nearestLog()
@@ -294,9 +326,63 @@ async function act(a, task) {
         try { bot.stopDigging() } catch { /* already idle */ }
         digging = false; digTargetName = null
       }
-      break
     }
+    else if (a === 9) {
+      if (task !== 'craft') return  // crafting only exists in craft
+      if (!crafting) {
+        crafting = true; craftSince = Date.now()
+        doCraftStep().catch(() => {}).finally(() => { crafting = false })
+      } else if (Date.now() - craftSince > 8000) { crafting = false }
+    }
+}
+
+function countItem(n) {
+  const i = bot.inventory.items().find(x => x.name === n)
+  return i ? i.count : 0
+}
+
+// One rung of the wood-age ladder: planks -> sticks -> wooden pickaxe.
+// Guarded by the crafting flag like digging (async, timeouts, no overlap).
+async function doCraftStep() {
+  const R = bot.registry
+  if (!R || !R.itemsByName) throw new Error('no registry')
+  const id = (n) => R.itemsByName[n].id
+  const table = bot.findBlock({ matching: (b) => b && b.name === 'crafting_table', maxDistance: 4 })
+  if (countItem('wooden_pickaxe') > 0) return
+  if (countItem('stick') < 2 && countItem('oak_planks') >= 2) {
+    const rec = bot.recipesFor(id('stick'), null, 1, null)[0]
+    if (rec) await bot.craft(rec, 1, null)
+    return
   }
+  if (countItem('oak_planks') < 3 && countItem('oak_log') >= 1) {
+    const rec = bot.recipesFor(id('oak_planks'), null, 1, null)[0]
+    if (rec) await bot.craft(rec, 1, null)
+    return
+  }
+  if (table && countItem('oak_planks') >= 3 && countItem('stick') >= 2) {
+    const rec = bot.recipesFor(id('wooden_pickaxe'), null, 1, table)[0]
+    if (rec) await bot.craft(rec, 1, table)
+  }
+}
+
+// Vanilla HUD mirror: brain regions -> bossbars, status -> actionbar.
+// This is what players WITHOUT the mod see (works on any version).
+async function mirrorBrain() {
+  const s = lastBrainState
+  if (!s || !s.regions) return
+  const R = s.regions
+  const bars = [['lamina', R.lamina], ['medulla', R.medulla], ['lobula', R.lobula], ['kc', R.kc], ['mbon', R.mbon], ['app', R.mbon_app], ['av', R.mbon_av], ['cx', R.cx], ['gf', R.gf]]
+  for (const [k, v] of bars) {
+    const pct = Math.max(0, Math.min(100, Math.round((v || 0) * 100)))
+    await rsend(`bossbar set fly:${k} value ${pct}`)
+    await rsend(`bossbar set fly:${k} players @a`)
+  }
+}
+
+async function actionbar() {
+  const s = lastBrainState
+  if (!s) return
+  await rsend(`title @a actionbar {"text":"[${task}] ${s.action_name} R${epReward.toFixed(1)} ep${episode} logs${logsThisEp} rpe${s.rpe}","color":"green"}`)
 }
 
 async function loop() {
@@ -305,7 +391,7 @@ async function loop() {
   while (trainingActive && episode < targetEpisodes && episode < MAX_EPISODES) {
     await resetEpisode()
     let done = false, minDist = 1e9
-    const actCounts = new Array(9).fill(0)
+    const actCounts = new Array(10).fill(0)
     while (!done) {
       const { sectors, proprio, dist, logs } = sense()
       // reward: shaping on approach + log events + time pressure
@@ -313,18 +399,25 @@ async function loop() {
       r += lastReward; lastReward = 0
       const gained = Math.max(0, logs - prevLogs); prevLogs = logs
       r += 0.05 * gained  // pickup bonus from inventory delta (robust)
+      if (task === 'craft') {
+        const pl = countItem('oak_planks'), st = countItem('stick'), pk = countItem('wooden_pickaxe')
+        r += 0.05 * Math.max(0, pl - prevPlanks) + 0.05 * Math.max(0, st - prevSticks)
+        if (pk > prevPick) { r += 2; done = true; console.log(`[bot] ep ${episode} t=${t} CRAFTED`); bot.chat(`[fly] crafted a wooden pickaxe in ${t} ticks (ep ${episode})`) }
+        prevPlanks = pl; prevSticks = st; prevPick = pk
+      }
       prevDist = dist
       if (dist > 25) r -= 0.02  // don't roam the walls
       const fell = bot.entity.position.y < AY - 4
       if (fell) { r -= 1; done = true; console.log(`[bot] ep ${episode} t=${t} FELL y=${bot.entity.position.y}`) }
       if (bot.health <= 0) { r -= 1; done = true; console.log(`[bot] ep ${episode} t=${t} DIED`) }
-      if (task === 'chop' && logs >= LOG_GOAL) { r += 2; done = true; console.log(`[bot] ep ${episode} t=${t} GOAL`); bot.chat(`[fly] chopped ${LOG_GOAL} logs in ${t} ticks (ep ${episode})`) }
-      if (task === 'beacon' && dist < 2.5) { r += 2; done = true; console.log(`[bot] ep ${episode} t=${t} ARRIVED`); bot.chat(`[fly] reached the beacon in ${t} ticks (ep ${episode})`) }
+      if (task === 'chop' && logs >= LOG_GOAL) { r += 2; done = true; console.log(`[bot] ep ${episode} t=${t} GOAL`); bot.chat(`[fly] chopped ${LOG_GOAL} logs in ${t} ticks (ep ${episode})`); rc('title @a title {"text":"GOAL +2","color":"gold"}').catch(() => {}) }
+      if (task === 'beacon' && dist < 2.5) { r += 2; done = true; console.log(`[bot] ep ${episode} t=${t} ARRIVED`); bot.chat(`[fly] reached the beacon in ${t} ticks (ep ${episode})`); rc('title @a title {"text":"BEACON +2","color":"aqua"}').catch(() => {}) }
       if (t >= EP_TIMEOUT_TICKS) { done = true; console.log(`[bot] ep ${episode} TIMEOUT`) }
       const t0 = Date.now()
       const brainAction = await brainStep({ sectors, proprio }, r, done)
       // FORCE_MINE=1: mechanics-test hook — always mine (brain still ticks/learns)
       const action = process.env.FORCE_MINE ? 8 : brainAction
+      if (dopeMult !== 1.0) r *= dopeMult  // live dopamine dial
       if (prevAction === 8 && !lastMineHadTarget) r -= 0.01  // swinging at nothing
       prevAction = action
       if (process.env.DIG_DEBUG && t < 15) {
@@ -333,6 +426,8 @@ async function loop() {
       }
       actCounts[action]++
       minDist = Math.min(minDist, dist)
+      if (t % 10 === 0) await mirrorBrain()
+      if (t % 20 === 0) await actionbar()
       epReward += r
       if (!done) await act(action, task)
       t++
@@ -382,7 +477,7 @@ function onCommand(user, cmd, args) {
       break
     case 'status': {
       const s = lastBrainState
-      bot.chat(`[fly] ep=${episode} task=${task} t=${t} R=${epReward.toFixed(2)} logs=${logsThisEp} dist=${prevDist.toFixed(1)} eps=${s?.eps ?? '?'} act=${s?.action_name ?? '?'}`)
+      bot.chat(`[fly] ep=${episode} task=${task} t=${t} R=${epReward.toFixed(2)} logs=${logsThisEp} dist=${prevDist.toFixed(1)} eps=${s?.eps ?? '?'} act=${s?.action_name ?? '?'} dope=x${dopeMult}`)
       break
     }
     case 'task': {
@@ -402,8 +497,26 @@ function onCommand(user, cmd, args) {
     case 'play':
       bot.chat(`/gamemode survival ${user}`)
       break
+    case 'dope': {
+      const v = parseFloat(args[0] ?? '')
+      if (Number.isFinite(v)) {
+        dopeMult = Math.max(0, Math.min(10, v))
+        bot.chat(`[fly] dopamine dial set to x${dopeMult} (watch rpe flare)`)
+      } else {
+        lastReward += 1.0
+        bot.chat('[fly] dopamine pulse +1.0 (watch approach flare)')
+      }
+      break
+    }
+    case 'summon': {
+      // spawn a named pet fly at the requester; the training bot stays on task
+      const name = args.join(' ').replace(/[^a-zA-Z0-9_ ]/g, '').slice(0, 16) || 'Drosobot Jr'
+      bot.chat(`/execute as ${user} at @s run summon minecraft:allay ~ ~1 ~ {CustomName:'"${name}"',CustomNameVisible:1,PersistenceRequired:1b}`)
+      bot.chat(`[fly] spawned ${name} for ${user}`)
+      break
+    }
     case 'help':
-      bot.chat('[fly] !train [N] !stop !status !task chop|beacon|both !watch !play')
+      bot.chat('[fly] !train [N] !stop !status !dope [x] !task chop|beacon|craft|both !watch !summon [name] !play')
       break
     default:
       bot.chat(`[fly] unknown !${cmd} (try !help)`)
@@ -413,7 +526,7 @@ function onCommand(user, cmd, args) {
 function brainStep(obs, reward, done) {
   return new Promise((resolve, reject) => {
     const to = setTimeout(() => reject(new Error('brain timeout')), 5000)
-    brain.send(JSON.stringify({ type: 'step', episode, t, obs, reward, done, logs: logsThisEp }))
+    brain.send(JSON.stringify({ type: 'step', episode, t, obs, reward, done, logs: logsThisEp, dope: dopeMult }))
     brain.once('message', (raw) => {
       clearTimeout(to)
       try { const o = JSON.parse(raw.toString()); lastBrainState = o.state ?? null; resolve(o.action ?? 0) }

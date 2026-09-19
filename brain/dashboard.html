@@ -7,6 +7,7 @@
   body{margin:0;background:#0b0e11;color:#e8e8e8;font-family:Consolas,Menlo,monospace;display:flex;height:100vh}
   #view{flex:1;border:0;background:#000}
   #panel{width:248px;padding:10px;background:#10141a;border-left:1px solid #2a2f36;overflow:auto}
+  #brainmap{width:100%;height:190px;background:#05070a;border:1px solid #2a2f36;margin-bottom:8px}
   h1{font-size:13px;color:#ffc861;margin:0 0 4px}
   .live{font-size:12px}
   .row{display:flex;align-items:center;margin:4px 0;font-size:11px}
@@ -22,6 +23,7 @@
 <iframe id="view" src="http://127.0.0.1:3007" title="first-person view"></iframe>
 <div id="panel">
   <h1>DROSOPHILA BRAIN <span id="live" class="live">○ connecting</span></h1>
+  <canvas id="brainmap" width="248" height="190"></canvas>
   <div id="bars"></div>
   <div class="stat" id="stats">waiting for brain…</div>
   <div class="stat">3D view: <a href="http://127.0.0.1:3007" target="_blank">open fullscreen</a><br>
@@ -40,6 +42,55 @@ NAMES.forEach(n => {
 });
 const live = document.getElementById('live');
 const stats = document.getElementById('stats');
+const bcv = document.getElementById('brainmap');
+const bx = bcv.getContext('2d');
+function glow(x, y, rx, ry, v, color) {
+  if (v <= 0.003) return;
+  const a = Math.max(0, Math.min(1, v * 3));
+  const g = bx.createRadialGradient(x, y, 1, x, y, Math.max(rx, ry));
+  g.addColorStop(0, color.replace('A', a.toFixed(2)));
+  g.addColorStop(1, color.replace('A', '0'));
+  bx.fillStyle = g;
+  bx.beginPath(); bx.ellipse(x, y, rx, ry, 0, 0, 7); bx.fill();
+}
+// Dorsal-view fly brain: optic lobes left/right, mushroom-body calyces +
+// lobes center, central complex midline, giant fiber descending.
+function drawBrain(o) {
+  const R = o.regions || {};
+  const W = bcv.width, H = bcv.height;
+  bx.clearRect(0, 0, W, H);
+  bx.fillStyle = '#10141a';
+  bx.beginPath(); bx.ellipse(W * 0.22, H * 0.42, W * 0.17, H * 0.26, 0, 0, 7); bx.fill();
+  bx.beginPath(); bx.ellipse(W * 0.78, H * 0.42, W * 0.17, H * 0.26, 0, 0, 7); bx.fill();
+  bx.beginPath(); bx.ellipse(W * 0.5, H * 0.46, W * 0.26, H * 0.3, 0, 0, 7); bx.fill();
+  const vis = Math.max(R.lamina || 0, R.medulla || 0, R.lobula || 0);
+  glow(W * 0.22, H * 0.42, W * 0.15, H * 0.22, vis, 'rgba(80,160,255,A)');
+  glow(W * 0.78, H * 0.42, W * 0.15, H * 0.22, vis, 'rgba(80,160,255,A)');
+  const kc = R.kc || 0;
+  glow(W * 0.4, H * 0.34, W * 0.07, H * 0.08, kc, 'rgba(124,252,0,A)');
+  glow(W * 0.6, H * 0.34, W * 0.07, H * 0.08, kc, 'rgba(124,252,0,A)');
+  const mb = Math.max(R.mbon_app || 0, R.mbon_av || 0, R.mbon || 0);
+  glow(W * 0.43, H * 0.58, W * 0.05, H * 0.12, mb, 'rgba(124,252,0,A)');
+  glow(W * 0.57, H * 0.58, W * 0.05, H * 0.12, mb, 'rgba(124,252,0,A)');
+  glow(W * 0.5, H * 0.47, W * 0.05, H * 0.05, R.cx || 0, 'rgba(255,200,97,A)');
+  const gf = R.gf || 0;
+  glow(W * 0.46, H * 0.78, W * 0.03, H * 0.12, gf, 'rgba(255,80,80,A)');
+  glow(W * 0.54, H * 0.78, W * 0.03, H * 0.12, gf, 'rgba(255,80,80,A)');
+  const rpe = Math.abs(o.rpe || 0);
+  if (rpe > 0.12) {
+    const a = Math.max(0, Math.min(0.9, rpe));
+    bx.strokeStyle = 'rgba(255,220,80,' + a.toFixed(2) + ')';
+    bx.lineWidth = 3;
+    bx.beginPath(); bx.ellipse(W * 0.5, H * 0.47, W * 0.34, H * 0.38, 0, 0, 7); bx.stroke();
+    bx.fillStyle = 'rgba(255,220,80,' + a.toFixed(2) + ')';
+    bx.font = 'bold 13px Consolas,monospace';
+    bx.fillText('DOPAMINE ' + (o.rpe > 0 ? '+' : '') + Number(o.rpe).toFixed(2), 8, 18);
+  }
+  bx.fillStyle = '#666';
+  bx.font = '10px Consolas,monospace';
+  bx.fillText('optic', 8, H - 8);
+  bx.fillText('mushroom body', W * 0.36, H - 8);
+}
 function connect() {
   const ws = new WebSocket('ws://127.0.0.1:8765');
   ws.onopen = () => ws.send(JSON.stringify({ role: 'hud' }));
@@ -54,10 +105,11 @@ function connect() {
         divs[n].fill.style.width = (v * 100).toFixed(1) + '%';
         divs[n].val.textContent = v.toFixed(3);
       }
-      stats.innerHTML = `task: <b>${o.task_name}</b><br>` +
+      stats.innerHTML = `task: <b>${o.task_name}</b> · <b>${o.mode}</b><br>` +
         `act: <b>${o.action_name}</b> (#${o.action})<br>` +
         `R ${o.reward_sum} · ep ${o.episode} · logs ${o.logs}/5<br>` +
         `eps ${o.eps} · rpe ${o.rpe}`;
+      drawBrain(o);
     } catch (e) { /* keep last frame */ }
   };
   ws.onclose = () => {

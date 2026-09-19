@@ -27,7 +27,9 @@ No scripts, no waypoints. The mushroom-body layer (600 Kenyon cells, sparse
 plasticity (3-factor rule), so rewarded pathways get stronger. Epsilon-greedy
 exploration decays per episode. Weights persist in `brain/weights.npz`.
 
-Tasks: **chop** (collect 5 logs) and **beacon** (reach the pillar, +2).
+Tasks: **chop** (collect 5 logs), **beacon** (reach the pillar, +2),
+**craft** (wooden pickaxe: +0.05 per planks/sticks, +2 pickaxe).
+**craft** (wooden pickaxe: +0.05 per planks/sticks, +2 pickaxe).
 Dopamine (reward): +1 per log broken, +0.05 per pickup, approach shaping,
 +2 goal/arrival bonus. Punishment (signals it doesn't like): −0.3 for
 digging the wrong block (−1.0 for arena glass, −0.1 leaves), −0.01 per
@@ -48,6 +50,22 @@ up) and trains in the foreground. Episodes alternate two tasks: **chop**
 The current task rides along in the brain input, the CSV, and both UIs
 (browser dashboard + in-game HUD are both compact now).
 
+## Friends on the same Wi-Fi (no mods needed on their side)
+
+1. On the host: right-click `server/open_lan.ps1` → Run as Administrator
+   (opens the firewall, prints your LAN IP).
+2. Friends join `<your-LAN-IP>:25565`. Offline-mode server: any username
+   works, but names must be DISTINCT (duplicates kick each other).
+3. They get auto-opped on join (for `/watch` spectating); de-op them after
+   with `/deop <name>` so they can't grief the arena. Set `OPWATCH_ALLOW`
+   (comma-separated names) on the next backend restart to only ever auto-op
+   those. Set `COMMANDERS` to gate who can run training commands.
+4. Up to 8 players total (bot takes one slot). More players = more load on
+   an already busy machine; close the 3D viewer tab if it stutters.
+5. Friends across the internet: easiest is playit.gg (TCP tunnel, free tier)
+   pointed at 127.0.0.1:25565 — no router changes. Alternative: forward
+   port 25565 in your router to this PC.
+
 ## Control training in game
 
 Real `/` commands (vanilla `/trigger`, no OP needed; the bot polls them over
@@ -62,6 +80,9 @@ RCON). Set `flyArg` first when a value is needed:
 | `/trigger fly set 5` | spectate the bot (needs OP — auto-granted by op watchdog) |
 | `/trigger fly set 6` | back to survival |
 | `/trigger fly set 7` | help |
+| `/trigger fly set 8` | spawn a pet fly at your side (training bot undisturbed) |
+| `/trigger fly set 9` | dopamine pulse +1 right now (watch it flare) |
+| `/trigger flyArg set 20` then `/trigger fly set 10` | dopamine dial x2.0 (arg/10, 0–10) |
 
 `!`-chat versions (`!train 50`, `!stop`, `!status`, …) do the same thing.
 With the HUD mod loaded you also get real slash commands: `/fly train 50`,
@@ -99,6 +120,14 @@ dashboard. With all three processes running, open:
 - **http://127.0.0.1:8766/dashboard.html** — 3D view side-by-side with live
   firing bars per brain region, current action, reward, episode, log count.
 - http://127.0.0.1:3007 — fullscreen 3D view.
+
+## Vanilla HUD (datapack, no mods, any client)
+
+The bot auto-installs `datapacks/fly-1.21.4` into the world (1.20.1 variant
+included) and mirrors the brain into **bossbars** — one per region — plus an
+actionbar status line and GOAL titles. Any vanilla client on any version sees
+it; no Fabric, no downloads. `/trigger` commands work through the same
+datapack objectives.
 
 ## In-game HUD (needs Minecraft: Java Edition + Fabric)
 

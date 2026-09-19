@@ -4,6 +4,14 @@
 param([int]$Episodes = 2, [string]$ForceMine = '', [string]$SpawnDist = '')
 $ErrorActionPreference = 'Stop'
 
+$c = New-Object Net.Sockets.TcpClient
+try {
+  $c.Connect('127.0.0.1', 25565)
+  $c.Close()
+  Write-Host '[e2e] a server is already running on 25565 - aborting (run stop_all.ps1 first)'
+  exit 1
+} catch { }
+
 $srv = Start-Process -FilePath 'java' `
   -ArgumentList '-Xmx2G', '-Xms1G', '-jar', 'server.jar', 'nogui' -PassThru
 try {

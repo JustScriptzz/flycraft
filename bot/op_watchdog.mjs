@@ -5,6 +5,9 @@ import { Rcon } from 'rcon-client'
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 const opped = new Set(['Drosobot'])
+// OPWATCH_ALLOW=name1,name2 (env): only auto-op those. Unset = op everyone
+// (fine solo; set it before inviting friends so strangers can't grief).
+const allow = (process.env.OPWATCH_ALLOW ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
 
 for (;;) {
   try {
@@ -20,6 +23,7 @@ for (;;) {
       const names = m ? m[1].split(',').map(s => s.trim()).filter(Boolean) : []
       for (const n of names) {
         if (opped.has(n)) continue
+        if (allow.length > 0 && !allow.includes(n.toLowerCase())) continue
         console.log(`[opwatch] op ${n}: ${await rcon.send(`op ${n}`)}`)
         opped.add(n)
       }
